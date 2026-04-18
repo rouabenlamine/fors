@@ -175,30 +175,43 @@ export async function getKpis(): Promise<KPI[]> {
 }
 
 export async function getActivities(): Promise<ActivityLog[]> {
-  const rows = await query<any>("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 50");
-  const data = rows.map((r: any) => {
-    let tId = "";
-    let detailsMsg = "";
-    try {
-      const parsed = JSON.parse(r.details || "{}");
-      tId = parsed.ticketId || "";
-      
-      if (!tId && typeof parsed.message === 'string') {
-        const match = parsed.message.match(/(INC\d+)/);
-        if (match) tId = match[1];
-      }
-    } catch(e) {}
+  try {
+    const rows = await query<any>("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 50");
+    console.log("[getActivities] Fetched rows count:", rows.length);
+    
+    if (rows && rows.length > 0) {
+      console.log("[getActivities] First row sample:", Object.keys(rows[0]));
+    }
 
-    return {
-      id: r.id.toString(),
-      action: r.action,
-      ticketId: tId,
-      performedBy: r.user_matricule || "System",
-      timestamp: r.created_at,
-      details: r.details
-    };
-  });
-  return JSON.parse(JSON.stringify(data));
+    const data = rows.map((r: any) => {
+      let tId = "";
+      let detailsMsg = "";
+      try {
+        const parsed = JSON.parse(r.details || "{}");
+        tId = parsed.ticketId || "";
+        
+        if (!tId && typeof parsed.message === 'string') {
+          const match = parsed.message.match(/(INC\d+)/);
+          if (match) tId = match[1];
+        }
+      } catch(e) {
+        console.error("[getActivities] details parse error for row id", r.id, e);
+      }
+
+      return {
+        id: (r.id || r.ID || Math.random()).toString(),
+        action: r.action || "UNKNOWN",
+        ticketId: tId,
+        performedBy: r.user_matricule || "System",
+        timestamp: r.created_at || new Date().toISOString(),
+        details: r.details || ""
+      };
+    });
+    return JSON.parse(JSON.stringify(data));
+  } catch (err) {
+    console.error("[getActivities] Server error:", err);
+    return [];
+  }
 }
 
 export async function getUsers(): Promise<User[]> {
@@ -325,19 +338,19 @@ export async function analyzeTicketAction(ticketId: string, title: string, descr
   // Save to DB
   try {
     await execute(`
-      INSERT INTO ai_analysis (analysis_id, incident_number, root_cause, resolution_steps, suggested_sql, confidence_score)
+      INSERT INTO ai_analysis (incident_number, incident_description, root_cause, resolution_steps, suggested_sql, confidence_score)
       VALUES (?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        analysis_id = VALUES(analysis_id),
+        incident_description = VALUES(incident_description),
         root_cause = VALUES(root_cause),
         resolution_steps = VALUES(resolution_steps),
         suggested_sql = VALUES(suggested_sql),
         confidence_score = VALUES(confidence_score)
     `, [
-      analysisId,
       ticketId,
+      description,
       analysis.rootCause,
-      analysis.recommendation,
+      JSON.stringify(analysis.recommendation),
       analysis.sqlProposal,
       analysis.confidence / 100
     ]);
@@ -359,8 +372,9 @@ export async function analyzeTicketAction(ticketId: string, title: string, descr
       }
     });
 
-  } catch (err) {
+  } catch (err: any) {
     console.error("Failed to save analysis:", err);
+    throw new Error(`DB Error: ${err.message}`);
   }
 
   return JSON.parse(JSON.stringify(analysis));
@@ -490,7 +504,7 @@ export async function deleteConversationAction(conversationId: string) {
   return { success: true };
 }
 
-export async function validateAnalysisAction(ticketId: string) {
+export async function validateAnalysisAction(ticketId: string, currentAnalysis?: any) {
   const session = await getSession();
   const userMatricule = session.user?.matricule || "UNKNOWN";
 
@@ -502,57 +516,98 @@ export async function validateAnalysisAction(ticketId: string) {
   }
 
   // 1. Get existing analysis
-  const [analysis] = await query<any>("SELECT * FROM ai_analysis WHERE incident_number = ?", [ticketId]);
-  if (!analysis) return { success: false, error: "Analysis not found. Run AI analysis first." };
+  let [analysis] = await query<any>("SELECT * FROM ai_analysis WHERE incident_number = ?", [ticketId]);
+  
+  let resolutionSteps = 'Predefined Query / Manual validation';
 
-  // Ensure analysis_id exists; generate one if it was created before migration
-  let analysisId = analysis.analysis_id;
-  if (!analysisId) {
-    analysisId = generateId("ANALYSIS");
-    await execute("UPDATE ai_analysis SET analysis_id = ? WHERE incident_number = ?", [analysisId, ticketId]);
+  if (!analysis) {
+    // Force create a dummy analysis record
+    await execute(`
+      INSERT INTO ai_analysis (incident_number, root_cause, resolution_steps, suggested_sql, confidence_score)
+      VALUES (?, ?, ?, ?, ?)
+    `, [
+      ticketId, 
+      currentAnalysis?.rootCause || 'Manual/Predefined Validation', 
+      JSON.stringify(currentAnalysis?.recommendation || resolutionSteps), 
+      currentAnalysis?.sqlProposal || '', 
+      1.0
+    ]);
+    resolutionSteps = currentAnalysis?.recommendation || resolutionSteps;
+  } else {
+    // Update existing analysis if UI provided new data
+    if (currentAnalysis) {
+      await execute(`
+        UPDATE ai_analysis 
+        SET root_cause = ?, resolution_steps = ?, suggested_sql = ?
+        WHERE incident_number = ?
+      `, [
+        currentAnalysis.rootCause || analysis.root_cause,
+        JSON.stringify(currentAnalysis.recommendation || analysis.resolution_steps),
+        currentAnalysis.sqlProposal || analysis.suggested_sql,
+        ticketId
+      ]);
+      resolutionSteps = currentAnalysis.recommendation || analysis.resolution_steps;
+    } else {
+      resolutionSteps = analysis.resolution_steps || resolutionSteps;
+    }
   }
 
   // 2. Transactional commit – both validated_incidents and ticket state update
   //    are committed atomically. If any step fails, everything rolls back.
   try {
     await transaction(async (conn) => {
-      // 2a. Insert validated incident with analysis_id FK
-      await conn.execute(`
-        INSERT INTO validated_incidents (incident_number, validated_by, incident_description, target_table, final_solution, analysis_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          validated_by = VALUES(validated_by),
-          incident_description = VALUES(incident_description),
-          final_solution = VALUES(final_solution),
-          analysis_id = VALUES(analysis_id)
-      `, [
-        ticketId,
-        userMatricule,
-        ticket.description || '',
-        '', // target_table – populated if known
-        analysis.resolution_steps || '',
-        analysisId
-      ]);
+      // 2a. Build a rich analysis snapshot to persist across both tables
+      const _rootCause = (currentAnalysis?.rootCause) || (analysis?.root_cause) || 'Manual/Predefined Validation';
+      const _sql       = (currentAnalysis?.sqlProposal) || (analysis?.suggested_sql) || '';
+      const _conf      = analysis?.confidence_score ?? 1.0;
+      let   _res: any  = resolutionSteps;
+      try { _res = JSON.parse(resolutionSteps as string); } catch {}
+      const _noteLines = [
+        '=== AI Analysis Report ===',
+        `Validated by: ${userMatricule}`,
+        `Confidence: ${Math.round(Number(_conf) * 100)}%`,
+        '',
+        '--- Root Cause ---',
+        _rootCause,
+        '',
+        '--- Resolution Steps ---',
+        typeof _res === 'string' ? _res : JSON.stringify(_res, null, 2),
+      ];
+      if (_sql.trim()) _noteLines.push('', '--- Suggested SQL ---', _sql);
+      const closeNotes = _noteLines.join('\n');
 
-      // 2b. Update ticket state
-      await conn.execute("UPDATE tickets SET state = 'Validated', comments = ? WHERE number = ?", [
-        `AI solution validated by ${userMatricule}. Analysis ID: ${analysisId}. Solution: ${analysis.resolution_steps}`,
+      // 2b. Update ai_analysis with consulted details and final solution
+      await conn.execute(`
+        UPDATE ai_analysis
+        SET consulted_by = ?,
+            consulted_at = NOW(),
+            final_solution = ?
+        WHERE incident_number = ?
+      `, [
+        userMatricule,
+        closeNotes,
         ticketId
       ]);
+
+      // 2c. Update ticket: state = Validated, close_notes = full analysis, comments = summary
+      await conn.execute(
+        "UPDATE tickets SET state = 'Validated', close_notes = ?, comments = ? WHERE number = ?",
+        [closeNotes, `Solution validated by ${userMatricule}.`, ticketId]
+      );
 
       // 2c. Audit log
       await logActivity("TICKET_VALIDATED", {
         ticketId,
         userMatricule,
-        details: { message: `Validated AI analysis for ticket ${ticketId}`, analysisId }
+        details: { message: `Validated AI analysis for ticket ${ticketId}` }
       });
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[validateAnalysisAction] Transaction failed:", err);
-    return { success: false, error: "Validation transaction failed. No data was committed." };
+    return { success: false, error: err.message || "Validation transaction failed." };
   }
 
-  return { success: true, analysisId };
+  return { success: true };
 }
 
 export async function rejectAnalysisAction(ticketId: string, reason: string = "") {
@@ -599,4 +654,80 @@ export async function logSqlExecutionAction(ticketId: string, sql: string, statu
       message: `Executed SQL for ticket ${ticketId}`
     }
   });
+}
+
+/**
+ * Creates / upserts a ticket from a parsed ServiceNow XML import.
+ * Inserts all 30 supported DB columns.  Called only when the user
+ * clicks "Trigger Analysis" — NOT on import.
+ */
+export async function createTicketFromXmlAction(dbFields: Record<string, string | null>) {
+  const q = `
+    INSERT INTO tickets (
+      number, short_description, description, state, priority,
+      assignment_group, assigned_to, sys_class_name, sys_created_on,
+      ref_incident_calendar_stc, ref_sc_request_calendar_stc,
+      work_notes, work_notes_list, sla_due, made_sla, time_worked,
+      sys_updated_on, sys_updated_by, sys_mod_count, opened_by,
+      opened_at, calendar_duration, due_date, closed_at, close_notes,
+      closed_by, comments, business_service, sys_created_by, u_response_time
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      short_description = VALUES(short_description),
+      description       = VALUES(description),
+      state             = VALUES(state),
+      priority          = VALUES(priority),
+      assignment_group  = VALUES(assignment_group),
+      assigned_to       = VALUES(assigned_to),
+      sys_updated_on    = VALUES(sys_updated_on),
+      comments          = VALUES(comments),
+      work_notes        = VALUES(work_notes),
+      work_notes_list   = VALUES(work_notes_list),
+      close_notes       = VALUES(close_notes),
+      closed_at         = VALUES(closed_at),
+      closed_by         = VALUES(closed_by)
+  `;
+
+  const values = [
+    dbFields.number,
+    dbFields.short_description,
+    dbFields.description,
+    dbFields.state,
+    dbFields.priority,
+    dbFields.assignment_group,
+    dbFields.assigned_to,
+    dbFields.sys_class_name,
+    dbFields.sys_created_on,
+    dbFields.ref_incident_calendar_stc,
+    dbFields.ref_sc_request_calendar_stc,
+    dbFields.work_notes,
+    dbFields.work_notes_list,
+    dbFields.sla_due,
+    dbFields.made_sla,
+    dbFields.time_worked,
+    dbFields.sys_updated_on,
+    dbFields.sys_updated_by,
+    dbFields.sys_mod_count,
+    dbFields.opened_by,
+    dbFields.opened_at,
+    dbFields.calendar_duration,
+    dbFields.due_date,
+    dbFields.closed_at,
+    dbFields.close_notes,
+    dbFields.closed_by,
+    dbFields.comments,
+    dbFields.business_service,
+    dbFields.sys_created_by,
+    dbFields.u_response_time,
+  ];
+
+  await query(q, values);
+
+  // Audit trail
+  await logActivity("XML_TICKET_IMPORTED", {
+    ticketId: dbFields.number,
+    details: { message: `Imported XML ticket ${dbFields.number}` }
+  });
+
+  return { success: true };
 }

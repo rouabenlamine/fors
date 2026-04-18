@@ -1,18 +1,36 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { getTicketById, getAnalyses, analyzeTicketAction } from "@/app/actions";
 import type { Ticket, TicketAnalysis as TicketAnalysisType } from "@/lib/types";
 import { TicketAnalysis } from "@/components/tickets/TicketAnalysis";
 import { SQLProposal } from "@/components/tickets/SQLProposal";
 import { ApproveRejectBar } from "@/components/tickets/ApproveRejectBar";
 import { STATUS_LABELS, STATUS_COLORS, PRIORITY_COLORS } from "@/lib/constants";
-import { ArrowLeft, Calendar, Users, Zap, RefreshCw } from "lucide-react";
+import { ArrowLeft, Calendar, Zap, RefreshCw, MessageSquare, CheckCircle, Bot } from "lucide-react";
 import Link from "next/link";
+
+/** Parse a validated close_notes string into structured analysis sections */
+function parseCloseNotes(notes: string) {
+  const result: { rootCause?: string; resolutionSteps?: string; suggestedSql?: string; validatedBy?: string; confidence?: string } = {};
+  if (!notes || !notes.startsWith("=== AI Analysis Report ===")) return null;
+  const validatedByMatch = notes.match(/^Validated by: (.+)$/m);
+  const confidenceMatch  = notes.match(/^Confidence: (.+)$/m);
+  const rootCauseMatch   = notes.match(/--- Root Cause ---\n([\s\S]+?)(?=\n---|\n===|$)/);
+  const resolutionMatch  = notes.match(/--- Resolution Steps ---\n([\s\S]+?)(?=\n---|\n===|$)/);
+  const sqlMatch         = notes.match(/--- Suggested SQL ---\n([\s\S]+?)(?=\n---|\n===|$)/);
+  if (validatedByMatch)  result.validatedBy    = validatedByMatch[1].trim();
+  if (confidenceMatch)   result.confidence     = confidenceMatch[1].trim();
+  if (rootCauseMatch)    result.rootCause      = rootCauseMatch[1].trim();
+  if (resolutionMatch)   result.resolutionSteps = resolutionMatch[1].trim();
+  if (sqlMatch)          result.suggestedSql   = sqlMatch[1].trim();
+  return result;
+}
 
 export default function TicketDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = params?.id ?? "";
   
   const [ticket, setTicket] = useState<Ticket | null>(null);
@@ -47,6 +65,10 @@ export default function TicketDetailPage() {
     );
   }
 
+  // Parse validation analysis snapshot from close_notes (set when ticket was validated)
+  const parsedValidation = ticket.closeNotes ? parseCloseNotes(ticket.closeNotes) : null;
+  const isValidated = ticket.status === "validated" || ticket.state?.toLowerCase() === "validated";
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
@@ -68,15 +90,25 @@ export default function TicketDetailPage() {
           </div>
         </div>
         
-        {ticket.aiConfidence !== undefined && (
-          <div className="flex items-center gap-3 bg-blue-50 border border-blue-100 px-4 py-2 rounded-xl">
-            <Zap className="w-4 h-4 text-blue-600" />
-            <div>
-              <p className="text-[10px] font-bold text-blue-400 uppercase tracking-tight">AI Confidence</p>
-              <p className="text-sm font-bold text-blue-700">{ticket.aiConfidence}%</p>
+        <div className="flex items-center gap-3">
+          {ticket.aiConfidence !== undefined && (
+            <div className="flex items-center gap-3 bg-blue-50 border border-blue-100 px-4 py-2 rounded-xl">
+              <Zap className="w-4 h-4 text-blue-600" />
+              <div>
+                <p className="text-[10px] font-bold text-blue-400 uppercase tracking-tight">AI Confidence</p>
+                <p className="text-sm font-bold text-blue-700">{ticket.aiConfidence}%</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {/* Chat with AI button */}
+          <Link
+            href={`/lab?id=${ticket.id}`}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            Chat with AI
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -126,7 +158,59 @@ export default function TicketDetailPage() {
             </div>
           </div>
 
-          {(ticket.status === 'closed' || ticket.closeNotes) && (
+          {/* ─── Validation / AI Analysis Report (from close_notes) ─── */}
+          {isValidated && parsedValidation && (
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden border-t-4 border-t-emerald-500">
+              <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-emerald-50/10">
+                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                  <div className="w-1.5 h-4 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
+                  AI Analysis Report
+                </h3>
+                <div className="flex items-center gap-2">
+                  {parsedValidation.confidence && (
+                    <span className="text-[10px] font-bold bg-emerald-100 px-2 py-0.5 rounded text-emerald-700 uppercase tracking-tighter">
+                      Confidence: {parsedValidation.confidence}
+                    </span>
+                  )}
+                  <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Validated
+                  </span>
+                </div>
+              </div>
+              <div className="p-6 space-y-5">
+                {parsedValidation.validatedBy && (
+                  <p className="text-[11px] text-slate-400 font-medium italic">Validated by: {parsedValidation.validatedBy}</p>
+                )}
+                {parsedValidation.rootCause && (
+                  <div>
+                    <p className="text-[11px] font-black text-blue-600 uppercase mb-2 tracking-widest">Root Cause</p>
+                    <div className="bg-blue-50/30 border border-blue-100/50 rounded-2xl p-4 text-sm text-slate-700 leading-relaxed">
+                      {parsedValidation.rootCause}
+                    </div>
+                  </div>
+                )}
+                {parsedValidation.resolutionSteps && (
+                  <div>
+                    <p className="text-[11px] font-black text-violet-600 uppercase mb-2 tracking-widest">Resolution Steps</p>
+                    <div className="bg-violet-50/30 border border-violet-100/50 rounded-2xl p-4 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                      {parsedValidation.resolutionSteps}
+                    </div>
+                  </div>
+                )}
+                {parsedValidation.suggestedSql && (
+                  <div>
+                    <p className="text-[11px] font-black text-slate-500 uppercase mb-2 tracking-widest">Suggested SQL</p>
+                    <div className="bg-slate-800 rounded-2xl p-4 font-mono text-xs text-blue-300 overflow-x-auto">
+                      <pre>{parsedValidation.suggestedSql}</pre>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ─── Resolution Summary (close_notes for non-validated closed tickets) ─── */}
+          {(ticket.status === 'closed' || (ticket.closeNotes && !isValidated)) && !parsedValidation && (
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden border-t-4 border-t-emerald-500">
               <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-emerald-50/10">
                 <h3 className="font-bold text-slate-800 flex items-center gap-2">
@@ -153,7 +237,7 @@ export default function TicketDetailPage() {
             <div className="p-6 border-b border-gray-50 flex items-center justify-between bg-amber-50/10">
               <h3 className="font-bold text-slate-800 flex items-center gap-2">
                 <div className="w-1.5 h-4 bg-amber-500 rounded-full" />
-                Comments & Interaction
+                Comments &amp; Interaction
               </h3>
               <span className="text-[10px] font-bold bg-amber-100 px-2 py-0.5 rounded text-amber-700 uppercase tracking-tighter">HISTORY</span>
             </div>
@@ -175,27 +259,8 @@ export default function TicketDetailPage() {
                 status={status}
                 onApprove={() => setStatus("approved")}
                 onReject={() => setStatus("rejected")}
-                onReanalyze={async () => {
-                  setLoadingAnalysis(true);
-                  try {
-                    const newAnalysis = await analyzeTicketAction(ticket.id, ticket.title, ticket.description);
-                    setAnalysis({
-                      ticketId: ticket.id,
-                      rootCause: newAnalysis.rootCause,
-                      impactedTables: newAnalysis.impactedTables || [],
-                      recommendation: newAnalysis.recommendation,
-                      sqlProposal: newAnalysis.sqlProposal,
-                      gostSummary: newAnalysis.gostSummary,
-                      urgency: newAnalysis.urgency
-                    });
-                    setTicket(prev => prev ? { ...prev, aiConfidence: newAnalysis.confidence, status: 'analysis_pending' } : null);
-                    setStatus('analysis_pending');
-                  } catch (err) {
-                    console.error("Analysis failed:", err);
-                    alert("Analysis request failed.");
-                  } finally {
-                    setLoadingAnalysis(false);
-                  }
+                onReanalyze={() => {
+                  router.push(`/lab?id=${ticket.id}&auto=true`);
                 }}
               />
             </div>
@@ -204,42 +269,63 @@ export default function TicketDetailPage() {
               <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center mb-4">
                 <Zap className="w-5 h-5 text-blue-400" />
               </div>
-              <h4 className="font-bold text-lg mb-2">No AI Analysis yet</h4>
-              <p className="text-xs text-slate-400 leading-relaxed mb-6">
-                This ticket has not been processed by the GOST assistant. AI insights and automated SQL proposals are generated upon request.
-              </p>
-              <button 
-                onClick={async () => {
-                  setLoadingAnalysis(true);
-                  try {
-                    const newAnalysis = await analyzeTicketAction(ticket.id, ticket.title, ticket.description);
-                    setAnalysis({
-                      ticketId: ticket.id,
-                      rootCause: newAnalysis.rootCause,
-                      impactedTables: newAnalysis.impactedTables || [],
-                      recommendation: newAnalysis.recommendation,
-                      sqlProposal: newAnalysis.sqlProposal,
-                      gostSummary: newAnalysis.gostSummary,
-                      urgency: newAnalysis.urgency
-                    });
-                    setTicket(prev => prev ? { ...prev, aiConfidence: newAnalysis.confidence } : null);
-                  } catch (err) {
-                    console.error("Analysis failed:", err);
-                    alert("Analysis request failed.");
-                  } finally {
-                    setLoadingAnalysis(false);
-                  }
-                }}
-                disabled={loadingAnalysis || status === 'validated' || status === 'Validated'}
-                className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loadingAnalysis ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (status === 'validated' || status === 'Validated') ? "Ticket Validated" : "Trigger Analysis Request"}
-              </button>
+              {isValidated ? (
+                <>
+                  <h4 className="font-bold text-lg mb-2 flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-400" />
+                    Ticket Validated
+                  </h4>
+                  <p className="text-xs text-slate-400 leading-relaxed mb-6">
+                    This ticket has been validated and the analysis has been stored. View the AI Analysis Report on the left.
+                  </p>
+                  <Link
+                    href={`/lab?id=${ticket.id}`}
+                    className="w-full flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold py-3 rounded-xl transition-all shadow-lg"
+                  >
+                    <Bot className="w-4 h-4" />
+                    Open in Analysis Lab
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <h4 className="font-bold text-lg mb-2">No AI Analysis yet</h4>
+                  <p className="text-xs text-slate-400 leading-relaxed mb-6">
+                    This ticket has not been processed by the GOST assistant. AI insights and automated SQL proposals are generated upon request.
+                  </p>
+                  <button 
+                    onClick={async () => {
+                      setLoadingAnalysis(true);
+                      try {
+                        const newAnalysis = await analyzeTicketAction(ticket.id, ticket.title, ticket.description);
+                        setAnalysis({
+                          ticketId: ticket.id,
+                          rootCause: newAnalysis.rootCause,
+                          impactedTables: newAnalysis.impactedTables || [],
+                          recommendation: newAnalysis.recommendation,
+                          sqlProposal: newAnalysis.sqlProposal,
+                          gostSummary: newAnalysis.gostSummary,
+                          urgency: newAnalysis.urgency
+                        });
+                        setTicket(prev => prev ? { ...prev, aiConfidence: newAnalysis.confidence } : null);
+                      } catch (err) {
+                        console.error("Analysis failed:", err);
+                        alert("Analysis request failed.");
+                      } finally {
+                        setLoadingAnalysis(false);
+                      }
+                    }}
+                    disabled={loadingAnalysis}
+                    className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loadingAnalysis ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        Generating...
+                      </>
+                    ) : "Trigger Analysis Request"}
+                  </button>
+                </>
+              )}
             </div>
           )}
 

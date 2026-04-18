@@ -103,6 +103,7 @@ You are analyzing incidents related to the TARGET DATASET described below.
 IMPORTANT: The tables listed in TARGET DATASET SCHEMA are the actual data tables you must reference.
 Do NOT reference the application's internal system tables (e.g. tickets, ai_analysis, audit_logs, sessions, users, Conversations, Messages).
 Only reference tables from the TARGET DATASET SCHEMA in your impactedTables and sqlProposal.
+EXTREMELY IMPORTANT: DO NOT output any internal "Thinking Process", reasoning, or thought steps. Provide ONLY the requested JSON output directly.
 
 TARGET DATASET SCHEMA:
 ${datasetSchema}
@@ -128,10 +129,14 @@ Required JSON format:
 Respond ONLY with the JSON object.`;
 
     const response = await ollamaFetch("/api/generate", {
-      model: "mistral:latest",
+      model: "qwen3.5:4b",
       prompt,
       stream: false,
       format: "json",
+      options: {
+        num_ctx: 4096, // Cap context window to reduce RAM usage and speed up response
+        temperature: 0.1 // Lower temperature for more direct, concise structural output
+      }
     });
 
     const data = await response.json();
@@ -167,10 +172,12 @@ export async function getGostChatResponse(
     getTargetDatasetSchema(),
   ]);
 
-  const systemPrompt = `You are GOST, the FORS automated support assistant.
+const systemPrompt = `You are GOST, the FORS automated support assistant.
 Use the context below to answer accurately. If you don't know, say you'll escalate to an engineer.
 When referring to tables, use the TARGET DATASET SCHEMA below — these are the actual data tables the user is working with.
 Do NOT reference internal platform tables (tickets, ai_analysis, audit_logs, sessions, users, Conversations, Messages).
+
+EXTREMELY IMPORTANT: DO NOT output any internal "Thinking Process", internal thought tracking, or <think> tags. Provide your final response directly to the user immediately. Keep your answer fast and concise.
 
 TARGET DATASET SCHEMA:
 ${datasetSchema}
@@ -186,13 +193,33 @@ ${context.text}`;
 
   try {
     const response = await ollamaFetch("/api/chat", {
-      model: "mistral:latest",
+      model: "qwen3.5:4b",
       messages,
       stream: false,
+      options: {
+        num_ctx: 4096, // Saves RAM and avoids extreme generation lengths for history
+        temperature: 0.3
+      }
     });
 
     const data = await response.json();
-    return data.message?.content || "No response generated.";
+    let reply = data.message?.content || "No response generated.";
+
+    // Guard: Remove <think> XML tags if the model injects them anyway
+    reply = reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+    // Guard: Remove numbered "Thinking Process:" steps if generated
+    if (reply.includes("Thinking Process:")) {
+      const parts = reply.split(/(?:Final Answer:|Refine the Response:|---\n)/i);
+      if (parts.length > 1) {
+        reply = parts[parts.length - 1].replace(/^[\s*"-]+/, "").trim();
+      } else {
+        // Just strip the common 'Thinking Process:' prefix text
+        reply = reply.replace(/Thinking Process:[\s\S]*?(?=\n\n|\n[A-Z_])/i, "").trim();
+      }
+    }
+
+    return reply;
   } catch (err: any) {
     console.error("[getGostChatResponse] Error:", err.message);
     return "GOST offline. Please check your local AI server (run `ollama serve`).";

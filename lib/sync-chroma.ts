@@ -10,23 +10,22 @@ export async function syncIncidentsToChroma() {
   try {
     const [rows] = await pool.execute(`
       SELECT 
-        v.id,
-        v.incident_number,
-        v.incident_description,
-        v.final_solution,
+        a.incident_number,
+        a.incident_description,
+        a.final_solution,
         a.root_cause,
         a.resolution_steps
-      FROM validated_incidents v
-      LEFT JOIN ai_analysis a ON a.id = v.analysis_id
+      FROM ai_analysis a
+      WHERE a.final_solution IS NOT NULL
     `) as any;
 
     const items = (rows as any[]).map(row => ({
-      id: `incident_${row.id}`,
+      id: `incident_${row.incident_number}`,
       content: `Problem: ${row.incident_description}\nRoot Cause: ${row.root_cause}\nSolution: ${row.final_solution}\nSteps: ${row.resolution_steps}`,
       metadata: {
         number: row.incident_number,
         type: 'validated_incident',
-        db_id: row.id
+        db_id: row.incident_number
       }
     }));
 

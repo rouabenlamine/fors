@@ -59,25 +59,23 @@ async function searchValidatedIncidents(keywords: string[], message: string): Pr
 
   try {
     const conditions = keywords
-      .map(() => `(v.incident_description LIKE ? OR i.short_description LIKE ? OR i.description LIKE ? OR a.root_cause LIKE ?)`)
+      .map(() => `(a.incident_description LIKE ? OR i.short_description LIKE ? OR i.description LIKE ? OR a.root_cause LIKE ?)`)
       .join(' OR ');
     const params = keywords.flatMap(k => [`%${k}%`, `%${k}%`, `%${k}%`, `%${k}%`]);
 
     const [rows] = await pool.execute(`
       SELECT
-        v.incident_number,
-        v.incident_description,
-        v.target_table,
-        v.final_solution,
+        a.incident_number,
+        a.incident_description,
+        a.final_solution,
         a.root_cause,
         a.resolution_steps,
         a.confidence_score,
         i.short_description,
         i.priority
-      FROM validated_incidents v
-      LEFT JOIN ai_analysis a ON a.incident_number = v.incident_number
-      LEFT JOIN tickets i ON i.number = v.incident_number
-      WHERE ${conditions}
+      FROM ai_analysis a
+      LEFT JOIN tickets i ON i.number = a.incident_number
+      WHERE a.final_solution IS NOT NULL AND (${conditions})
       ORDER BY a.confidence_score DESC
       LIMIT 5
     `, params) as any;
@@ -91,7 +89,7 @@ async function searchValidatedIncidents(keywords: string[], message: string): Pr
         `[Past Resolution ${row.incident_number}]`,
         `Problem: ${(row.incident_description || row.short_description || '').substring(0, 80)}`,
         `Cause: ${(row.root_cause || 'Unknown').substring(0, 80)}`,
-        `Solution: ${(row.final_solution || 'See details').replace(/\s+/g, ' ').substring(0, 180)}`,
+        `Solution: ${(row.final_solution || 'See details').replace(/\\s+/g, ' ').substring(0, 180)}`,
       ].join(' | ');
 
       return { source: 'validated_incidents', relevanceScore: relevance, content };
@@ -232,11 +230,10 @@ async function searchLiveIncidents(keywords: string[], message: string): Promise
       const [rows] = await pool.execute(`
         SELECT i.number, i.short_description, i.description, i.state, i.priority,
                i.comments, i.work_notes,
-               v.final_solution as validated_solution,
+               a.final_solution as validated_solution,
                a.root_cause as ai_root_cause, a.resolution_steps
         FROM tickets i
         LEFT JOIN ai_analysis a ON a.incident_number = i.number
-        LEFT JOIN validated_incidents v ON v.incident_number = i.number
         WHERE i.number = ?
         LIMIT 1
       `, [incMatch[0].toUpperCase()]) as any;

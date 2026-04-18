@@ -8,7 +8,9 @@ export type AuditAction =
   | "TICKET_VALIDATED" 
   | "TICKET_REJECTED" 
   | "CHAT_MESSAGE_SENT" 
-  | "CONVERSATION_DELETED";
+  | "CONVERSATION_DELETED"
+  | "LOGIN"
+  | "LOGOUT";
 
 interface LogOptions {
   ticketId?: string;

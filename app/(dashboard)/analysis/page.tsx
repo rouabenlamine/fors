@@ -75,12 +75,6 @@ export default async function AnalysisPage() {
                       Open
                     </button>
                   </Link>
-                  <Link href={`/lab?id=${ticket.id}`}>
-                    <button className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 transition-all hover:bg-white hover:shadow-sm">
-                      <FlaskConical className="w-3.5 h-3.5" />
-                      Lab
-                    </button>
-                  </Link>
                 </div>
               </div>
             </div>

@@ -121,7 +121,7 @@ function DatabaseExplorerContent() {
             <Database className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white tracking-tight">Database Explorer</h1>
+            <h1 className="text-xl font-bold text-white tracking-tight">FORS Explorer</h1>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
               <p className="text-[10px] text-slate-300 font-bold uppercase tracking-widest">Live Node: <span className="text-white">Prod_FORS_01</span></p>

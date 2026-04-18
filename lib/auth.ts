@@ -3,6 +3,7 @@ import { getIronSession, SessionOptions } from "iron-session";
 import { cookies } from "next/headers";
 import type { User } from "./types";
 import { query } from "@/lib/db";
+import { revalidatePath } from "next/cache";
 import { sessionOptions } from "./session-config";
 import type { SessionData } from "./session-config";
 
@@ -61,6 +62,13 @@ export async function createSession(user: User) {
   session.user = user;
   await session.save();
 
+  // Log login activity
+  await query(
+    "INSERT INTO audit_logs (user_matricule, action, details) VALUES (?, ?, ?)",
+    [user.matricule, "LOGIN", JSON.stringify({ message: `User ${user.matricule} logged in`, timestamp: new Date().toISOString() })]
+  );
+  revalidatePath("/activity");
+
   // Cleanup old sessions on login to keep DB slim
   await query("DELETE FROM sessions WHERE expires_at < NOW()");
 }
@@ -68,11 +76,31 @@ export async function createSession(user: User) {
 export async function logout() {
   const cookieStore = await cookies();
   const token = cookieStore.get("fors-token")?.value;
+  
+  let userMatricule = "UNKNOWN";
   if (token) {
+    const sessions = await query<any>("SELECT user_matricule FROM sessions WHERE token = ?", [token]);
+    if (sessions.length > 0) {
+      userMatricule = sessions[0].user_matricule;
+    }
     await query("DELETE FROM sessions WHERE token = ?", [token]);
   }
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions as SessionOptions);
-  session.destroy();
+
+  if (userMatricule !== "UNKNOWN") {
+    await query(
+      "INSERT INTO audit_logs (user_matricule, action, details) VALUES (?, ?, ?)",
+      [userMatricule, "LOGOUT", JSON.stringify({ message: `User ${userMatricule} logged out`, timestamp: new Date().toISOString() })]
+    );
+    try {
+      revalidatePath("/activity");
+    } catch(e) {}
+  }
+
+  // Clear iron session by setting empty properties and saving or relying on custom cookies
+  session.isLoggedIn = false;
+  session.user = undefined;
+  await session.save();
+
   cookieStore.delete("fors-token");
 }
 

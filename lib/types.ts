@@ -15,6 +15,8 @@ export interface Ticket {
   title: string;
   description: string;
   status: TicketStatus;
+  /** Raw DB state value (e.g. "Validated", "Analysis Pending") */
+  state?: string;
   priority: TicketPriority;
   category: string;
   team: string;
