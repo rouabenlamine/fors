@@ -28,13 +28,18 @@ export async function getSession(): Promise<SessionData> {
   }
 
   const s = sessions[0];
+  let sessionRole = s.role;
+  if (s.role === "it_support") sessionRole = "agent";
+  else if (s.role === "user") sessionRole = "reporter";
+  // 'admin' and 'superadmin' map to themselves
+
   return {
     isLoggedIn: true,
     user: {
       matricule: s.user_matricule,
       name: s.name,
       surname: s.prenom,
-      role: s.role === "admin" ? "manager" : s.role === "it_support" ? "agent" : "reporter",
+      role: sessionRole,
     }
   };
 }
@@ -105,7 +110,6 @@ export async function logout() {
 }
 
 const ROLE_PASSWORDS: Record<string, string> = {
-  admin: "manager2025",
   it_support: "fors2025",
   user: "report2025",
 };
@@ -122,7 +126,7 @@ export async function validateCredentials(
   const user = users[0];
 
   let isValid = false;
-  if (user.password && user.password.startsWith('$2b$')) {
+  if (user.password && (user.password.startsWith('$2b$') || user.password.startsWith('$2a$') || user.password.startsWith('$2y$'))) {
     try {
       const bcrypt = require('bcryptjs');
       isValid = bcrypt.compareSync(password, user.password);
@@ -139,10 +143,16 @@ export async function validateCredentials(
     }
   }
 
+  let mappedRole = user.role;
+  if (user.role === "it_support") mappedRole = "agent";
+  else if (user.role === "user") mappedRole = "reporter";
+  // If user.role is "admin" or "superadmin", keep mappedRole as is.
+  // Note: For backwards compatibility, if they were "manager" in DB they also stay "manager"
+
   return {
     matricule: user.matricule,
     name: user.name,
     surname: user.prenom,
-    role: user.role === "admin" ? "manager" : user.role === "it_support" ? "agent" : "reporter",
+    role: mappedRole,
   };
 }

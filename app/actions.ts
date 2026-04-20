@@ -731,3 +731,53 @@ export async function createTicketFromXmlAction(dbFields: Record<string, string 
 
   return { success: true };
 }
+
+// -- EXPLORER ACTIONS --
+
+export async function getExplorerMenus() {
+  const q = `
+    SELECT 
+      m.id,
+      m.title,
+      m.description,
+      m.parentId,
+      m.order,
+      (SELECT COUNT(*) FROM menus c WHERE c.parentId = m.id) AS childCount
+    FROM menus m
+    ORDER BY m.parentId IS NULL DESC, m.order ASC;
+  `;
+  const rows = await query<any>(q);
+  return JSON.parse(JSON.stringify(rows));
+}
+
+export async function getExplorerTables() {
+  const q = `
+    SELECT 
+      dt.id,
+      dt.name,
+      dt.description,
+      COUNT(DISTINCT di.id) AS indexCount,
+      COUNT(DISTINCT df.id) AS fieldCount,
+      (
+        SELECT COUNT(*) FROM transactions t
+        WHERE FIND_IN_SET(dt.name, REPLACE(t.tables, ', ', ',')) > 0
+      ) AS txnCount
+    FROM database_tables dt
+    LEFT JOIN database_indexes di ON di.tableId = dt.id
+    LEFT JOIN database_fields df ON df.tableId = dt.id
+    GROUP BY dt.id, dt.name, dt.description
+    ORDER BY dt.name ASC;
+  `;
+  const rows = await query<any>(q);
+  return JSON.parse(JSON.stringify(rows));
+}
+
+export async function getExplorerTransactions(tableName: string) {
+  const q = `
+    SELECT id, name, description, pgmType, language, sqlPg, tables, pgms
+    FROM transactions
+    WHERE FIND_IN_SET(?, REPLACE(tables, ', ', ',')) > 0
+  `;
+  const rows = await query<any>(q, [tableName]);
+  return JSON.parse(JSON.stringify(rows));
+}

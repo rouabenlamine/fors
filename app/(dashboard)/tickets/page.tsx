@@ -98,6 +98,13 @@ export default function TicketsPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Page title — only on Tickets page */}
+      <h1 className="text-2xl font-black text-slate-800 mb-5 tracking-tight flex items-center gap-3">
+        <span className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
+          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"/></svg>
+        </span>
+        Tickets Dashboard
+      </h1>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-xl font-bold text-slate-800">Ticket List</h2>

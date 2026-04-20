@@ -4,22 +4,29 @@ import { sessionOptions } from "./lib/session-config";
 import type { SessionData } from "./lib/session-config";
 import type { UserRole } from "./lib/types";
 
-const PUBLIC_PATHS = ["/login", "/fors/auth/login", "/fors/auth/logout"];
+const PUBLIC_PATHS = ["/login", "/admin/login", "/fors/auth/login", "/fors/auth/logout"];
 
-const VALID_ROLES: UserRole[] = ["agent", "reporter", "manager"];
+// New updated VALID_ROLES include admin and superadmin
+const VALID_ROLES = ["agent", "reporter", "manager", "admin", "superadmin", "user", "it_support"];
 
-const ROLE_HOME: Record<UserRole, string> = {
-  agent:    "/tickets",
+// Default homes based on role
+const ROLE_HOME: Record<string, string> = {
+  agent: "/tickets",
   reporter: "/report",
-  manager:  "/tables",
+  manager: "/tables",
+  admin: "/admin/dashboard",
+  superadmin: "/superadmin/integrations",
+  user: "/tickets",
+  it_support: "/tickets"
 };
 
-const RESTRICTED: { prefix: string; roles: UserRole[] }[] = [
-  { prefix: "/report",     roles: ["reporter"] },
-  { prefix: "/tables",     roles: ["manager"] },
-  { prefix: "/database",   roles: ["manager", "agent"] },
-  { prefix: "/users",      roles: ["manager"] },
-  { prefix: "/kpi-config", roles: ["manager"] },
+const RESTRICTED: { prefix: string; roles: string[] }[] = [
+  { prefix: "/report", roles: ["reporter"] },
+  { prefix: "/tables", roles: ["manager", "admin", "superadmin"] },
+  { prefix: "/database", roles: ["manager", "agent", "superadmin"] },
+  { prefix: "/users", roles: ["manager", "admin", "superadmin"] },
+  { prefix: "/kpi-config", roles: ["manager", "admin", "superadmin"] },
+  { prefix: "/admin/view-control", roles: ["admin", "superadmin"] },
 ];
 
 const AGENT_ONLY_PREFIXES = ["/tickets", "/analysis", "/lab", "/chat"];
@@ -42,29 +49,9 @@ export async function middleware(req: NextRequest) {
     return redirectToLogin(req);
   }
 
-  // We can't easily use mysql2 in Edge Middleware. 
-  // However, we can use a temporary workaround: treat iron-session as a fallback 
-  // or use a separate API check.
-  // Actually, for this assignment, I will assume Node runtime for middleware or 
-  // provide a simplified check if Edge.
-  
-  // For now, let's assume we can call getSession from a Server Action or similar.
-  // Actually, let's just check the token existence and validity in layouts/actions.
-  // To strictly follow "session table" requirement, the middleware should ideally check it.
-  
-  // If we are on Node.js runtime, we can use mysql2.
-  // Let's use iron-session as a wrapper for the token for now, but the DB as the source.
-  
   const res = NextResponse.next();
-  let session: any; // Simplified for now
+  let session: any;
 
-  // Instead of full DB check in middleware (which might fail in Edge), 
-  // we'll rely on the cookie presence and then validate in the app.
-  // But to satisfy the requirement "handled automatically using the session table":
-  
-  // Assuming we can't do DB in Edge, we'll use iron-session to store the user data 
-  // AND the token, so we can validate the token in the DB on actual data requests.
-  
   try {
     session = await getIronSession<SessionData>(req, res, sessionOptions);
   } catch {
@@ -75,22 +62,36 @@ export async function middleware(req: NextRequest) {
     return redirectToLogin(req);
   }
 
-  const role = session.user.role as UserRole;
+  const role = session.user.role as string;
 
-  // Redirect away from role-restricted routes
+  // Admin access validation
+  if (pathname.startsWith("/admin") && !["admin", "superadmin"].includes(role)) {
+    const url = req.nextUrl.clone();
+    url.pathname = ROLE_HOME[role] || "/tickets";
+    return NextResponse.redirect(url);
+  }
+
+  // Superadmin access validation
+  if (pathname.startsWith("/superadmin") && role !== "superadmin") {
+    const url = req.nextUrl.clone();
+    // Redirect Admins trying to reach superadmin back to admin
+    url.pathname = role === "admin" ? "/admin/dashboard" : (ROLE_HOME[role] || "/tickets");
+    return NextResponse.redirect(url);
+  }
+
+  // General Role-Based Routing
   for (const { prefix, roles } of RESTRICTED) {
     if (pathname.startsWith(prefix) && !roles.includes(role)) {
       const url = req.nextUrl.clone();
-      url.pathname = ROLE_HOME[role];
+      url.pathname = ROLE_HOME[role] || "/tickets";
       return NextResponse.redirect(url);
     }
   }
 
-  // Reporter and manager can't access agent-only routes
   if (AGENT_ONLY_PREFIXES.some((p) => pathname.startsWith(p))) {
-    if (role === "reporter" || role === "manager") {
+    if (["reporter", "manager"].includes(role)) {
       const url = req.nextUrl.clone();
-      url.pathname = ROLE_HOME[role];
+      url.pathname = ROLE_HOME[role] || "/tickets";
       return NextResponse.redirect(url);
     }
   }

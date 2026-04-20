@@ -3,10 +3,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Bell, X, CheckCircle, AlertCircle, Info, Clock } from "lucide-react";
 import type { User } from "@/lib/types";
+import type { RolePermissions } from "@/lib/view-components";
 
 interface HeaderProps {
-  title: string;
+  title?: string;
   user?: User;
+  viewPermissions?: RolePermissions | null;
 }
 
 const MOCK_NOTIFICATIONS = [
@@ -29,8 +31,8 @@ const MOCK_NOTIFICATIONS = [
   {
     id: "3",
     type: "info",
-    title: "GOST Analysis Ready",
-    message: "GOST has finished analysing TK-005 — confidence 91%.",
+    title: "AI Analysis Ready",
+    message: "AI has finished analysing TK-005 — confidence 91%.",
     time: "1 hr ago",
     read: true,
   },
@@ -51,7 +53,8 @@ const notifIcon = {
   warning: <Clock className="w-4 h-4 text-amber-500" />,
 };
 
-export function Header({ title, user }: HeaderProps) {
+export function Header({ title, user, viewPermissions }: HeaderProps) {
+  const showNotifications = !viewPermissions || viewPermissions["notification_button"] !== false;
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -82,9 +85,16 @@ export function Header({ title, user }: HeaderProps) {
 
   return (
     <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 sticky top-0 z-20">
-      <h1 className="text-base font-semibold text-slate-800">{title}</h1>
+      {/* Page title — only shown when explicitly provided */}
+      {title ? (
+        <h1 className="text-base font-semibold text-slate-800">{title}</h1>
+      ) : (
+        <div /> /* spacer so right-side controls stay right-aligned */
+      )}
 
       <div className="flex items-center gap-3">
+        {/* Notification Bell — conditionally shown via view permissions */}
+        {showNotifications && (
         <div className="relative" ref={notifRef}>
           <button
             onClick={() => setNotifOpen((v) => !v)}
@@ -148,7 +158,9 @@ export function Header({ title, user }: HeaderProps) {
             </div>
           )}
         </div>
+        )} {/* end showNotifications */}
 
+        {/* User Info */}
         {user ? (
           <div className="flex items-center gap-2.5 pl-3 border-l border-gray-100">
             <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg flex items-center justify-center text-[12px] font-bold text-white shadow-lg shadow-blue-500/20 shrink-0">

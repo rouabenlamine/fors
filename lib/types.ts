@@ -1,10 +1,11 @@
-export type UserRole = "agent" | "reporter" | "manager";
+export type UserRole = "agent" | "reporter" | "manager" | "admin" | "superadmin" | "user" | "it_support";
 
 export interface User {
   matricule: string;
   name: string;
   surname: string;
   role: UserRole;
+  permissions?: any; // JSON limits payload for Admins
 }
 
 export type TicketStatus = "pending" | "canceled" | "closed" | "sql_proposed" | "validated" | "rejected" | "analysis_pending";

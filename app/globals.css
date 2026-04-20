@@ -79,3 +79,9 @@ body {
 .card-accent-red    { border-left: 3px solid #ef4444; }
 .card-accent-purple { border-left: 3px solid #8b5cf6; }
 .card-accent-teal   { border-left: 3px solid #14b8a6; }
+
+/* Custom slim scrollbar — used across explorer panels, sidebar, etc. */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }

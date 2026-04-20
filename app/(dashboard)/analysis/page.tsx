@@ -21,7 +21,7 @@ export default async function AnalysisPage() {
         </div>
         <div>
           <h2 className="text-xl font-bold text-slate-800">Analysis Workspace</h2>
-          <p className="text-sm text-slate-400">GOST Agent analysis results for all active tickets</p>
+          <p className="text-sm text-slate-400">AI Agent analysis results for all active tickets</p>
         </div>
       </div>
 
@@ -70,7 +70,7 @@ export default async function AnalysisPage() {
                 <div className="flex flex-col gap-2">
                   <Link href={`/tickets/${ticket.id}`}>
                     <button className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white transition-all hover:scale-105 shadow-sm"
-                      style={{ background: `linear-gradient(135deg, #2563eb, #3b82f6)` }}>
+                      style={{ background: `linear-gradient(135deg, #9937d6ff, #9710f1ff)` }}>
                       <ExternalLink className="w-3.5 h-3.5" />
                       Open
                     </button>
